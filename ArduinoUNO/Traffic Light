@@ -1,0 +1,28 @@
+// C++ code
+//
+int red=2,yellow=3,green=4;
+void setup()
+{
+  pinMode(2, OUTPUT);
+  pinMode(3, OUTPUT);
+  pinMode(4, OUTPUT);
+}
+
+void loop()
+{
+  digitalWrite(red, HIGH);
+  delay(3000); // Wait for 5000 millisecond(s)
+  digitalWrite(red, LOW);
+  
+  digitalWrite(yellow, HIGH);
+  delay(2000); // Wait for 2500 millisecond(s)
+  digitalWrite(yellow, LOW);
+  
+  digitalWrite(green, HIGH);
+  delay(3000); // Wait for 5000 millisecond(s)
+  digitalWrite(green, LOW);
+  
+  digitalWrite(yellow, HIGH);
+  delay(2000); // Wait for 2500 millisecond(s)
+  digitalWrite(yellow, LOW);
+}

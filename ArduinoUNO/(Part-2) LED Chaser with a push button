@@ -1,0 +1,91 @@
+const int buttonPin=10;
+const int leds[5]= {2,3,4,5,6};
+int x;
+
+bool lastButtonState=HIGH;
+bool running=false;
+bool direction=false;
+// false = Left to Right
+// true  = Right to Left
+
+int currentLED=0;
+unsigned long previousMillis=0;
+const long interval=700;
+
+void setup()
+{
+    pinMode(buttonPin,INPUT);
+
+    for(int i=0; i<5; i++)
+    {
+        pinMode(leds[i], OUTPUT);
+        //digitalWrite(leds[i], LOW);
+    }
+}
+
+void loop()
+{
+    // ----- Button Read -----
+    bool buttonState=digitalRead(buttonPin);
+    if(buttonState)
+    {
+        running=true;
+    }
+
+    // Button Press Detect (LOW edge)
+    if(lastButtonState==HIGH && buttonState==LOW)
+    {
+        direction = !direction;   // direction toggle
+        //running = true;
+
+        // Start position reset
+        if (!direction)
+            currentLED = 0;       // Left to Right
+        else
+            currentLED = 4;       // Right to Left
+
+        // Turn all LEDs OFF immediately
+        for (int i = 0; i < 5; i++)
+            digitalWrite(leds[i], LOW);
+    }
+
+    lastButtonState = buttonState;
+
+    // ----- LED Sequence -----
+    if (running)
+    {
+        unsigned long currentMillis = millis();
+
+        if (currentMillis - previousMillis >= interval)
+        {
+            previousMillis = currentMillis;
+
+            // Turn ON current LED
+            digitalWrite(leds[x], LOW);
+            digitalWrite(leds[currentLED], HIGH);
+            x=currentLED;
+
+            // Move direction
+            if (!direction)
+            {
+                //digitalWrite(leds[currentLED], LOW);
+                currentLED++;
+                if (currentLED > 5)
+                {
+                    running = false;
+                  	//digitalWrite(leds[4], LOW);
+                }
+            }
+            else
+            {
+                //digitalWrite(leds[currentLED], LOW);
+                currentLED--;
+                if (currentLED < -1)
+                {
+                    running = false;
+                  	//digitalWrite(leds[0], LOW);
+                }
+            }
+        }
+    }
+}

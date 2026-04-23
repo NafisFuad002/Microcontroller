@@ -1,0 +1,53 @@
+// C++ code
+//
+int a=3,b=2,c=6,d=7,e=8,f=4,g=5;
+void setup()
+{
+  pinMode(2, OUTPUT);
+  pinMode(3, OUTPUT);
+  pinMode(4, OUTPUT);
+  pinMode(5, OUTPUT);
+  pinMode(6, OUTPUT);
+  pinMode(7, OUTPUT);
+  pinMode(8, OUTPUT);
+}
+void display(int a, int b, int c, int d, int e, int f, int g)
+{
+  digitalWrite(a, HIGH);
+  digitalWrite(b, HIGH); 
+  digitalWrite(c, HIGH);
+  digitalWrite(d, HIGH); 
+  digitalWrite(e, HIGH);
+  digitalWrite(f, HIGH);
+  digitalWrite(g, HIGH);
+  delay(1500);
+  digitalWrite(a, LOW);
+  digitalWrite(b, LOW); 
+  digitalWrite(c, LOW);
+  digitalWrite(d, LOW); 
+  digitalWrite(e, LOW);
+  digitalWrite(f, LOW);
+  digitalWrite(g, LOW);
+  
+}
+void loop()
+{
+ 
+  display(a,b,c,d,e,f,9); //0
+  display(9,b,c,9,9,9,9); //1
+  display(a,b,9,d,e,9,g); //2
+  display(a,b,c,d,9,9,g); //3
+  display(9,b,c,9,9,f,g); //4
+  display(a,9,c,d,9,f,g); //5
+  display(a,9,c,d,e,f,g); //6
+  display(a,b,c,9,9,9,9); //7
+  display(a,b,c,d,e,f,g); //8
+  display(a,b,c,d,9,f,g); //9
+  display(a,b,c,9,e,f,g); //A
+  display(a,b,c,d,e,f,g); //B
+  display(a,9,9,d,e,f,9); //C
+  display(a,b,c,d,e,f,9); //D
+  display(a,9,9,d,e,f,g); //E
+  display(a,9,9,9,e,f,g); //F
+  display(a,b,c,d,9,f,g); //G
+}

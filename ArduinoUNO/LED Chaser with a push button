@@ -1,0 +1,46 @@
+//c++
+int port_numbers[5]= {2,3,4,5,6};
+int flag=1;
+void setup()
+{
+    for(int i=0; i<5; i++)
+    {
+        pinMode(port_numbers[i], OUTPUT);
+    }
+    pinMode(10, INPUT);
+}
+void leftToRight()
+{
+    for(int i=0; i<5; i++)
+    {
+        digitalWrite(port_numbers[i], HIGH);
+        delay(2000);
+        digitalWrite(port_numbers[i], LOW);
+    }
+}
+void rightToLeft()
+{
+    for(int i=4; i>=0; i--)
+    {
+        digitalWrite(port_numbers[i], HIGH);
+        delay(2000);
+        digitalWrite(port_numbers[i], LOW);
+    }
+}
+
+void loop()
+{
+    if(digitalRead(10)==HIGH)
+    {
+      if(flag==1)
+      {
+        leftToRight();
+        flag=2;
+      }
+      else
+      {
+        rightToLeft();
+        flag=1;
+      }
+    }
+}

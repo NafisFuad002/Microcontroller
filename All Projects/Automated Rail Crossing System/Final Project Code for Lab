@@ -1,0 +1,146 @@
+#include <Servo.h>
+
+Servo gateServo;
+
+// Ultrasonic Sensor 1
+int trig1 = 9;
+int echo1 = 10;
+
+// Ultrasonic Sensor 2
+int trig2 = 11;
+int echo2 = 12;
+
+// Ultrasonic Sensor 3
+// Train barrier পার হলে detect করবে
+int trig3 = 3;
+int echo3 = 4;
+
+// Ultrasonic Sensor 4
+// Barrier এর নিচে object আছে কিনা detect করবে
+int trig4 = 5;
+int echo4 = 2;
+
+// Servo Motor
+int servoPin = 6;
+
+// Red light and Buzzer same pin
+int redLightBuzzer = 7;
+
+// Green light
+int greenLight = 8;
+
+// Distance variables
+int distance1;
+int distance2;
+int distance3;
+int distance4;
+
+// Detection distance
+int detectDistance = 40;
+
+// Servo positions
+int gateOpen = 0;       // Barrier up / initial position
+int gateClose = 90;     // Barrier down
+
+bool isGateClosed = false;
+
+int getDistance(int trigPin, int echoPin) {
+  long duration;
+  int distance;
+
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  duration = pulseIn(echoPin, HIGH, 30000);
+
+  if (duration == 0) {
+    return 999;
+  }
+
+  distance = duration * 0.034 / 2;
+  return distance;
+}
+
+void openGate() {
+  gateServo.write(gateOpen);
+  digitalWrite(greenLight, HIGH);
+  digitalWrite(redLightBuzzer, LOW);
+  isGateClosed = false;
+}
+
+void closeGate() {
+  gateServo.write(gateClose);
+  digitalWrite(greenLight, LOW);
+  digitalWrite(redLightBuzzer, HIGH);
+  isGateClosed = true;
+}
+
+void setup() {
+  pinMode(trig1, OUTPUT);
+  pinMode(echo1, INPUT);
+
+  pinMode(trig2, OUTPUT);
+  pinMode(echo2, INPUT);
+
+  pinMode(trig3, OUTPUT);
+  pinMode(echo3, INPUT);
+
+  pinMode(trig4, OUTPUT);
+  pinMode(echo4, INPUT);
+
+  pinMode(redLightBuzzer, OUTPUT);
+  pinMode(greenLight, OUTPUT);
+
+  gateServo.attach(servoPin);
+
+  // শুরুতে barrier open থাকবে
+  openGate();
+
+  Serial.begin(9600);
+}
+
+void loop() {
+  distance1 = getDistance(trig1, echo1);
+  delay(50);
+
+  distance2 = getDistance(trig2, echo2);
+  delay(50);
+
+  distance3 = getDistance(trig3, echo3);
+  delay(50);
+
+  distance4 = getDistance(trig4, echo4);
+  delay(50);
+
+  Serial.print("Sensor 1: ");
+  Serial.print(distance1);
+  Serial.print(" cm | Sensor 2: ");
+  Serial.print(distance2);
+  Serial.print(" cm | Sensor 3: ");
+  Serial.print(distance3);
+  Serial.print(" cm | Sensor 4: ");
+  Serial.print(distance4);
+  Serial.println(" cm");
+
+  // Sensor 4 activate হলে barrier close হবে না, safety হিসেবে open থাকবে
+  if (distance4 <= detectDistance) {
+    openGate();
+  }
+
+  // Sensor 3 activate হলে train barrier পার হয়েছে, তাই barrier open হবে
+  else if (distance3 <= detectDistance) {
+    openGate();
+  }
+
+  // Sensor 1 এবং Sensor 2 একসাথে activate হলে barrier close হবে
+  else if (distance1 <= detectDistance && distance2 <= detectDistance) {
+    closeGate();
+  }
+
+  // অন্য অবস্থায় gate আগের অবস্থায় থাকবে
+  delay(300);
+}

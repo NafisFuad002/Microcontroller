@@ -1,0 +1,447 @@
+#include <ESP32Servo.h>
+#include <Wire.h>
+//#include <Adafruit_LiquidCrystal.h>
+#include <LiquidCrystal_I2C.h>
+
+// =====================================================
+// I2C LCD (ESP32 default I2C pins)
+// LCD SDA -> ESP32 GPIO21
+// LCD SCL -> ESP32 GPIO22
+// =====================================================
+//Adafruit_LiquidCrystal lcd(0);
+LiquidCrystal_I2C lcd(0x3F, 16, 2);
+
+// =====================================================
+// Servo motor
+// =====================================================
+Servo gateServo;
+
+const byte servoPin = 13;
+
+const int gateOpenPosition = 15;
+const int gateClosePosition = 105;
+
+// =====================================================
+// Ultrasonic Sensor 1
+// =====================================================
+const byte trig1 = 27;
+const byte echo1 = 34;
+
+// =====================================================
+// Ultrasonic Sensor 2
+// =====================================================
+const byte trig2 = 26;
+const byte echo2 = 35;
+
+// =====================================================
+// Ultrasonic Sensor 3
+// =====================================================
+const byte trig3 = 25;
+const byte echo3 = 32;
+
+// =====================================================
+// Ultrasonic Sensor 4
+// =====================================================
+const byte trig4 = 33;
+const byte echo4 = 36;
+
+// =====================================================
+// Ultrasonic Sensor 5
+// =====================================================
+const byte trig5 = 14;
+const byte echo5 = 39;
+
+// =====================================================
+// Red light, buzzer and green light
+// =====================================================
+const byte redLightBuzzer = 4;
+const byte greenLight = 5;
+
+// =====================================================
+// Detection settings
+// =====================================================
+const int detectDistance = 5;
+const float speedSensorGapMeter = 8.0;
+const unsigned long speedTimeoutMs = 10000UL;
+const unsigned long echoTimeoutUs = 10000UL;
+const byte requiredDepartureConfirmations = 2;
+
+// =====================================================
+// Distance variables
+// =====================================================
+int distance1 = 500;
+int distance2 = 500;
+int distance3 = 500;
+int distance4 = 500;
+int distance5 = 500;
+
+// =====================================================
+// Railway system states
+// =====================================================
+bool trainInsideCrossing = false;
+bool obstacleDetected = false;
+
+// =====================================================
+// Speed measurement states
+// =====================================================
+bool previousSensor1State = false;
+bool previousSensor2State = false;
+
+bool waitingForSensor2 = false;
+bool speedAvailable = false;
+
+unsigned long sensor1DetectionTimeMs = 0;
+
+float trainSpeedKmh = 0.0;
+
+// =====================================================
+// Departure detection
+// =====================================================
+byte departureCounter = 0;
+bool departureSensorsArmed = false;
+
+// =====================================================
+// Current servo position
+// =====================================================
+int currentGatePosition = -1;
+
+
+int getDistance(byte trigPin, byte echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(trigPin, LOW);
+
+  unsigned long duration =
+    pulseIn(echoPin, HIGH, echoTimeoutUs);
+
+  if (duration == 0) {
+    return 600;
+  }
+
+  float distanceCm =
+    duration * 0.0343 / 2.0;
+
+  return (int)distanceCm;
+}
+
+
+void moveGate(int newPosition) {
+  if (currentGatePosition != newPosition) {
+    gateServo.write(newPosition);
+    currentGatePosition = newPosition;
+  }
+}
+
+
+void openGateNormal() {
+  moveGate(gateOpenPosition);
+
+  digitalWrite(greenLight, HIGH);
+  digitalWrite(redLightBuzzer, LOW);
+}
+
+
+void openGateForSafety() {
+  moveGate(gateOpenPosition);
+
+  digitalWrite(greenLight, LOW);
+  digitalWrite(redLightBuzzer, HIGH);
+}
+
+
+void closeGate() {
+  moveGate(gateClosePosition);
+
+  digitalWrite(greenLight, LOW);
+  digitalWrite(redLightBuzzer, HIGH);
+}
+
+
+void processArrivalAndSpeed(
+  bool sensor1Active,
+  bool sensor2Active
+) {
+  bool sensor1NewDetection =
+    sensor1Active && !previousSensor1State;
+
+  bool sensor2NewDetection =
+    sensor2Active && !previousSensor2State;
+
+  if (
+    !trainInsideCrossing &&
+    !waitingForSensor2 &&
+    sensor1NewDetection &&
+    !sensor2Active
+  ) {
+    sensor1DetectionTimeMs = millis();
+
+    waitingForSensor2 = true;
+    speedAvailable = false;
+  }
+
+  if (
+    !trainInsideCrossing &&
+    waitingForSensor2 &&
+    sensor2NewDetection
+  ) {
+    unsigned long sensor2DetectionTimeMs =
+      millis();
+
+    unsigned long elapsedTimeMs =
+      sensor2DetectionTimeMs -
+      sensor1DetectionTimeMs;
+
+    if (
+      elapsedTimeMs > 0 &&
+      elapsedTimeMs <= speedTimeoutMs
+    ) {
+      trainSpeedKmh =
+        (speedSensorGapMeter * 3600.0) /
+        elapsedTimeMs;
+
+      speedAvailable = true;
+
+      trainInsideCrossing = true;
+
+      departureCounter = 0;
+      departureSensorsArmed = false;
+    }
+
+    waitingForSensor2 = false;
+  }
+
+  if (
+    waitingForSensor2 &&
+    millis() - sensor1DetectionTimeMs >
+    speedTimeoutMs
+  ) {
+    waitingForSensor2 = false;
+    speedAvailable = false;
+  }
+
+  previousSensor1State = sensor1Active;
+  previousSensor2State = sensor2Active;
+}
+
+
+void processDeparture(bool sensor3Active,bool sensor5Active) 
+{
+  bool departurePairActive =
+    sensor3Active && sensor5Active;
+
+  if (!trainInsideCrossing) {
+    departureCounter = 0;
+    departureSensorsArmed = false;
+    return;
+  }
+
+  if (!departureSensorsArmed) {
+    if (!departurePairActive) {
+      departureSensorsArmed = true;
+    }
+
+    departureCounter = 0;
+    return;
+  }
+
+  if (departurePairActive) {
+    if (departureCounter < requiredDepartureConfirmations) {
+      departureCounter++;
+    }
+  }
+  else {
+    departureCounter = 0;
+  }
+
+  if (departureCounter >= requiredDepartureConfirmations) {
+    trainInsideCrossing = false;
+
+    departureCounter = 0;
+    departureSensorsArmed = false;
+    waitingForSensor2 = false;
+    speedAvailable = false;
+  }
+}
+
+
+void clearLCDLine(byte row) {
+  lcd.setCursor(0, row);
+  lcd.print("                ");
+  lcd.setCursor(0, row);
+}
+
+
+void updateLCD() {
+  static unsigned long previousLCDUpdate = 0;
+
+  if (millis() - previousLCDUpdate < 250) {
+    return;
+  }
+
+  previousLCDUpdate = millis();
+
+  clearLCDLine(0);
+
+  if (waitingForSensor2) {
+    lcd.print("Speed measuring");
+  }
+  else if (speedAvailable) {
+    lcd.print("V:");
+    lcd.print(trainSpeedKmh, 1);
+    lcd.print(" km/h");
+  }
+  else {
+    lcd.print("V: -- km/h");
+  }
+
+  clearLCDLine(1);
+
+  if (trainInsideCrossing && obstacleDetected) {
+    lcd.print("OBJECT! GATE UP");
+  }
+  else if (trainInsideCrossing) {
+    lcd.print("GATE: CLOSED");
+  }
+  else {
+    lcd.print("GATE: OPEN");
+  }
+}
+
+
+void printSerialData() {
+  static unsigned long previousSerialPrint = 0;
+
+  if (millis() - previousSerialPrint < 500) {
+    return;
+  }
+
+  previousSerialPrint = millis();
+
+  Serial.print("S1: ");
+  Serial.print(distance1);
+
+  Serial.print(" cm | S2: ");
+  Serial.print(distance2);
+
+  Serial.print(" cm | S3: ");
+  Serial.print(distance3);
+
+  Serial.print(" cm | S4: ");
+  Serial.print(distance4);
+
+  Serial.print(" cm | S5: ");
+  Serial.print(distance5);
+
+  Serial.print(" cm | Speed: ");
+
+  if (waitingForSensor2) {
+    Serial.print("Measuring");
+  }
+  else if (speedAvailable) {
+    Serial.print(trainSpeedKmh, 2);
+    Serial.print(" km/h");
+  }
+  else {
+    Serial.print("--");
+  }
+
+  Serial.print(" | Gate: ");
+
+  if (trainInsideCrossing && obstacleDetected) {
+    Serial.println("OPEN FOR SAFETY");
+  }
+  else if (trainInsideCrossing) {
+    Serial.println("CLOSED");
+  }
+  else {
+    Serial.println("OPEN");
+  }
+}
+
+
+void setup() {
+  pinMode(trig1, OUTPUT);
+  pinMode(echo1, INPUT);
+
+  pinMode(trig2, OUTPUT);
+  pinMode(echo2, INPUT);
+
+  pinMode(trig3, OUTPUT);
+  pinMode(echo3, INPUT);
+
+  pinMode(trig4, OUTPUT);
+  pinMode(echo4, INPUT);
+
+  pinMode(trig5, OUTPUT);
+  pinMode(echo5, INPUT);
+
+  pinMode(redLightBuzzer, OUTPUT);
+  pinMode(greenLight, OUTPUT);
+
+  ESP32PWM::allocateTimer(0);
+  gateServo.setPeriodHertz(50);
+  gateServo.attach(servoPin, 500, 2400);
+
+  Serial.begin(115200);
+
+  Wire.begin(21, 22);
+  lcd.begin(16, 2);
+  lcd.setBacklight(HIGH);
+
+  lcd.setCursor(0, 0);
+  lcd.print("Smart Railway");
+
+  lcd.setCursor(0, 1);
+  lcd.print("System Starting");
+
+  openGateNormal();
+
+  delay(1500);
+
+  lcd.clear();
+}
+
+
+void loop() {
+  distance1 = getDistance(trig1, echo1);
+  bool sensor1Active = distance1 <= detectDistance;
+  delay(10);
+
+  distance2 = getDistance(trig2, echo2);
+  bool sensor2Active = distance2 <= detectDistance;
+  delay(10);
+
+  processArrivalAndSpeed(sensor1Active, sensor2Active);
+
+  distance3 = getDistance(trig3, echo3);
+  bool sensor3Active = distance3 <= detectDistance;
+  delay(10);
+
+  distance4 = getDistance(trig4, echo4);
+  bool sensor4Active = distance4 <= detectDistance;
+  obstacleDetected = sensor4Active;
+  delay(10);
+
+  distance5 = getDistance(trig5, echo5);
+  bool sensor5Active = distance5 <= detectDistance;
+  delay(10);
+
+  processDeparture(sensor3Active, sensor5Active);
+
+  if (!trainInsideCrossing) {
+    openGateNormal();
+  }
+  else if (obstacleDetected) {
+    openGateForSafety();
+  }
+  else {
+    closeGate();
+  }
+
+  updateLCD();
+  printSerialData();
+}

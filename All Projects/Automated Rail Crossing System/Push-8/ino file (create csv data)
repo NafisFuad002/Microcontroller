@@ -343,7 +343,7 @@ String getTimeStamp() {
 
 void printCSVHeader() {
   delay(60000);
-  Serial.println("Train_No,Train_Detected,Gate_Status,Train_Arrival_Time,Gate_Close_Time,Gate_Open_Time,Train_Departure_Time,S1,S2,S3,S5,Train_Speed_kmh");
+  Serial.println("Train_No,Train_Detected,Gate_Status,Train_Arrival_Time,Gate_Close_Time,Gate_Open_Time,Train_Departure_Time,S1,S2,S3,S4,Train_Speed_kmh");
 }
 
 

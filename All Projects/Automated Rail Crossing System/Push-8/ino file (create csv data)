@@ -144,32 +144,32 @@ void moveGate(int newPosition) {
 
 void openGateNormal() {
   moveGate(gateOpenPosition);
-  digitalWrite(greenLight, LOW);       // green ON
-  digitalWrite(redLightBuzzer, HIGH);  // red OFF
+  digitalWrite(greenLight, LOW);       // green OFF
+  digitalWrite(redLightBuzzer, HIGH);  // red ON
   digitalWrite(buz, LOW);
 }
 
 
 void openGateForSafety() {
   moveGate(gateOpenPosition);
-  digitalWrite(greenLight, HIGH);      // green OFF
-  digitalWrite(redLightBuzzer, LOW);   // red ON
+  digitalWrite(greenLight, LOW);      // green OFF
+  digitalWrite(redLightBuzzer, HIGH);   // red ON
   digitalWrite(buz, HIGH);             // buzzer ON
 }
 
 
 void closeGate() {
   moveGate(gateClosePosition);
-  digitalWrite(greenLight, HIGH);      // green OFF
-  digitalWrite(redLightBuzzer, LOW);   // red ON
+  digitalWrite(greenLight, HIGH);      // green ON
+  digitalWrite(redLightBuzzer, LOW);   // red OFF
   digitalWrite(buz, LOW);
 }
 
 
 void closeGateMultipleTrain() {
   moveGate(gateClosePosition);
-  digitalWrite(greenLight, HIGH);      // green OFF
-  digitalWrite(redLightBuzzer, LOW);   // red ON
+  digitalWrite(greenLight, LOW);      // green OFF
+  digitalWrite(redLightBuzzer, HIGH);   // red ON
   digitalWrite(buz, LOW);
 }
 

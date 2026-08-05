@@ -1,0 +1,565 @@
+// =====================================================
+// আপনার নিজের তথ্য এখানে বসান (নিচের ৪টা লাইন)
+// =====================================================
+#define BLYNK_TEMPLATE_ID   "TMPL6jaCpuISH"
+#define BLYNK_TEMPLATE_NAME "Smart Railway Crossing"
+#define BLYNK_AUTH_TOKEN    "yhJYpBsIp7L2lgvEZRsPngGkQuZ4kHrt"
+
+char ssid[] = "Tima";
+char pass[] = "window31";
+
+// =====================================================
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <ESP32Servo.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include "time.h"
+
+LiquidCrystal_I2C lcd(0x3F, 16, 2);
+
+Servo gateServo;
+
+const byte servoPin = 13;
+
+const int gateOpenPosition = 15;
+const int gateClosePosition = 105;
+
+const byte trig1 = 27;
+const byte echo1 = 34;
+
+const byte trig2 = 26;
+const byte echo2 = 35;
+
+const byte trig3 = 25;
+const byte echo3 = 32;
+
+const byte trig4 = 33;
+const byte echo4 = 36;
+
+const byte trig5 = 14;
+const byte echo5 = 39;
+
+const byte redLightBuzzer = 4;
+const byte greenLight = 5;
+const byte buz = 23;
+
+const int detectDistance = 5;
+const float speedSensorGapMeter = 8.0;
+const unsigned long speedTimeoutMs = 10000UL;
+const unsigned long echoTimeoutUs = 10000UL;
+
+int distance1 = 500;
+int distance2 = 500;
+int distance3 = 500;
+int distance4 = 500;
+int distance5 = 500;
+
+bool trainInsideCrossing = false;
+bool obstacleDetected = false;
+
+bool previousSensor1State = false;
+bool previousSensor2State = false;
+
+bool waitingForSensor2 = false;
+bool speedAvailable = false;
+
+unsigned long sensor1DetectionTimeMs = 0;
+
+float trainSpeedKmh = 0.0;
+
+// Departure detection (sequential: sensor3 first, then sensor5)
+bool previousSensor3State = false;
+bool previousSensor5State = false;
+bool waitingForSensor5 = false;
+unsigned long sensor3DetectionTimeMs = 0;
+
+// Reverse sequence -> Multiple train emergency (sensor5 first, then sensor3)
+bool waitingForSensor3Reverse = false;
+unsigned long sensor5DetectionTimeMs = 0;
+bool multipleTrainEmergency = false;
+
+int currentGatePosition = -1;
+
+int trainCountToday = 0;
+int lastCheckedDay = -1;
+
+bool manualMode = false;
+bool manualCloseCommand = false;
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 21600;
+const int   daylightOffset_sec = 0;
+
+BlynkTimer timer;
+
+
+int getDistance(byte trigPin, byte echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(trigPin, LOW);
+
+  unsigned long duration = pulseIn(echoPin, HIGH, echoTimeoutUs);
+
+  if (duration == 0) {
+    return 600;
+  }
+
+  float distanceCm = duration * 0.0343 / 2.0;
+
+  return (int)distanceCm;
+}
+
+
+void moveGate(int newPosition) {
+  if (currentGatePosition != newPosition) {
+    gateServo.write(newPosition);
+    currentGatePosition = newPosition;
+  }
+}
+
+
+void openGateNormal() {
+  moveGate(gateOpenPosition);
+  digitalWrite(greenLight, LOW);
+  digitalWrite(redLightBuzzer, HIGH);
+  digitalWrite(buz, LOW);
+}
+
+
+void openGateForSafety() {
+  moveGate(gateOpenPosition);
+  digitalWrite(greenLight, LOW);
+  digitalWrite(redLightBuzzer, HIGH);
+  digitalWrite(buz, HIGH);
+}
+
+
+void closeGate() {
+  moveGate(gateClosePosition);
+  digitalWrite(greenLight, HIGH);
+  digitalWrite(redLightBuzzer, LOW);
+  digitalWrite(buz, LOW);
+}
+
+
+void closeGateMultipleTrain() {
+  moveGate(gateClosePosition);
+  digitalWrite(greenLight, LOW);
+  digitalWrite(redLightBuzzer, HIGH);
+  digitalWrite(buz, LOW);
+}
+
+
+void processArrivalAndSpeed(bool sensor1Active, bool sensor2Active) {
+  bool sensor1NewDetection = sensor1Active && !previousSensor1State;
+  bool sensor2NewDetection = sensor2Active && !previousSensor2State;
+
+  if (!trainInsideCrossing && !waitingForSensor2 && sensor1NewDetection && !sensor2Active) {
+    sensor1DetectionTimeMs = millis();
+    waitingForSensor2 = true;
+    speedAvailable = false;
+  }
+
+  if (!trainInsideCrossing && waitingForSensor2 && sensor2NewDetection) {
+    if (sensor1Active) {
+      unsigned long sensor2DetectionTimeMs = millis();
+      unsigned long elapsedTimeMs = sensor2DetectionTimeMs - sensor1DetectionTimeMs;
+
+      if (elapsedTimeMs > 0 && elapsedTimeMs <= speedTimeoutMs) {
+        trainSpeedKmh = (speedSensorGapMeter * 3600.0) / elapsedTimeMs;
+        speedAvailable = true;
+        trainInsideCrossing = true;
+        multipleTrainEmergency = false;
+      }
+    }
+
+    waitingForSensor2 = false;
+  }
+
+  if (waitingForSensor2 && millis() - sensor1DetectionTimeMs > speedTimeoutMs) {
+    waitingForSensor2 = false;
+    speedAvailable = false;
+  }
+
+  previousSensor1State = sensor1Active;
+  previousSensor2State = sensor2Active;
+}
+
+
+void processDeparture(bool sensor3Active, bool sensor5Active)
+{
+  bool sensor3NewDetection = sensor3Active && !previousSensor3State;
+  bool sensor5NewDetection = sensor5Active && !previousSensor5State;
+
+  if (!trainInsideCrossing) {
+    waitingForSensor5 = false;
+    waitingForSensor3Reverse = false;
+    previousSensor3State = sensor3Active;
+    previousSensor5State = sensor5Active;
+    return;
+  }
+
+  // ============ স্বাভাবিক ক্রম: sensor3 আগে, sensor5 পরে (normal departure) ============
+  if (trainInsideCrossing && !waitingForSensor5 && !waitingForSensor3Reverse && sensor3NewDetection && !sensor5Active) {
+    sensor3DetectionTimeMs = millis();
+    waitingForSensor5 = true;
+  }
+
+  if (trainInsideCrossing && waitingForSensor5 && sensor5NewDetection) {
+    if (sensor3Active) {
+      trainInsideCrossing = false;
+      speedAvailable = false;
+      trainCountToday++;
+      multipleTrainEmergency = false;
+    }
+
+    waitingForSensor5 = false;
+  }
+
+  // ============ উল্টো ক্রম: sensor5 আগে, sensor3 পরে (Multiple Train Emergency) ============
+  if (trainInsideCrossing && !waitingForSensor5 && !waitingForSensor3Reverse && sensor5NewDetection && !sensor3Active) {
+    sensor5DetectionTimeMs = millis();
+    waitingForSensor3Reverse = true;
+  }
+
+  if (trainInsideCrossing && waitingForSensor3Reverse && sensor3NewDetection) {
+    if (sensor5Active) {
+      trainInsideCrossing = false;
+      speedAvailable = false;
+      trainCountToday += 2;
+      multipleTrainEmergency = true;
+    }
+
+    waitingForSensor3Reverse = false;
+  }
+
+  // Timeout
+  if (waitingForSensor5 && millis() - sensor3DetectionTimeMs > speedTimeoutMs) {
+    waitingForSensor5 = false;
+  }
+
+  if (waitingForSensor3Reverse && millis() - sensor5DetectionTimeMs > speedTimeoutMs) {
+    waitingForSensor3Reverse = false;
+  }
+
+  // ট্রিগার সেন্সর confirm হওয়ার আগেই inactive হলে সাথে সাথে বাতিল (bird protection)
+  if (waitingForSensor5 && !sensor3Active) {
+    waitingForSensor5 = false;
+  }
+
+  if (waitingForSensor3Reverse && !sensor5Active) {
+    waitingForSensor3Reverse = false;
+  }
+
+  previousSensor3State = sensor3Active;
+  previousSensor5State = sensor5Active;
+}
+
+
+void clearLCDLine(byte row) {
+  lcd.setCursor(0, row);
+  lcd.print("                ");
+  lcd.setCursor(0, row);
+}
+
+
+void updateLCD() {
+  static unsigned long previousLCDUpdate = 0;
+
+  if (millis() - previousLCDUpdate < 250) {
+    return;
+  }
+
+  previousLCDUpdate = millis();
+
+  clearLCDLine(0);
+
+  if (waitingForSensor2) {
+    lcd.print("Speed measuring");
+  }
+  else if (speedAvailable) {
+    lcd.print("V:");
+    lcd.print(trainSpeedKmh, 1);
+    lcd.print(" km/h");
+  }
+  else {
+    lcd.print("V: -- km/h");
+  }
+
+  clearLCDLine(1);
+
+  if (multipleTrainEmergency) {
+    lcd.print("MULTI TRAIN!");
+  }
+  else if (trainInsideCrossing && obstacleDetected) {
+    lcd.print("OBJECT! GATE UP");
+  }
+  else if (trainInsideCrossing) {
+    lcd.print("GATE: CLOSED");
+  }
+  else {
+    lcd.print("GATE: OPEN");
+  }
+}
+
+
+void printSerialData() {
+  static unsigned long previousSerialPrint = 0;
+
+  if (millis() - previousSerialPrint < 500) {
+    return;
+  }
+
+  previousSerialPrint = millis();
+
+  Serial.print("S1: "); Serial.print(distance1);
+  Serial.print(" cm | S2: "); Serial.print(distance2);
+  Serial.print(" cm | S3: "); Serial.print(distance3);
+  Serial.print(" cm | S4: "); Serial.print(distance4);
+  Serial.print(" cm | S5: "); Serial.print(distance5);
+
+  Serial.print(" cm | Speed: ");
+
+  if (waitingForSensor2) {
+    Serial.print("Measuring");
+  }
+  else if (speedAvailable) {
+    Serial.print(trainSpeedKmh, 2);
+    Serial.print(" km/h");
+  }
+  else {
+    Serial.print("--");
+  }
+
+  Serial.print(" | Gate: ");
+
+  if (trainInsideCrossing && obstacleDetected) {
+    Serial.println("OPEN FOR SAFETY");
+  }
+  else if (trainInsideCrossing) {
+    Serial.println("CLOSED");
+  }
+  else {
+    Serial.println("OPEN");
+  }
+
+  Serial.print("Trains today: ");
+  Serial.print(trainCountToday);
+
+  if (multipleTrainEmergency) {
+    Serial.println(" | !! MULTIPLE TRAIN EMERGENCY !!");
+  } else {
+    Serial.println();
+  }
+}
+
+
+void sendToBlynk() {
+  Blynk.virtualWrite(V0, distance1);
+  Blynk.virtualWrite(V1, distance2);
+  Blynk.virtualWrite(V2, distance3);
+  Blynk.virtualWrite(V3, distance4);
+  Blynk.virtualWrite(V4, distance5);
+
+  if (speedAvailable) {
+    Blynk.virtualWrite(V5, trainSpeedKmh);
+  } else {
+    Blynk.virtualWrite(V5, 0);
+  }
+
+  Blynk.virtualWrite(V7, trainInsideCrossing ? 1 : 0);
+  Blynk.virtualWrite(V8, trainCountToday);
+  Blynk.virtualWrite(V11, multipleTrainEmergency ? 1 : 0);
+
+  if (trainInsideCrossing && obstacleDetected) {
+    Blynk.virtualWrite(V6, 2);
+  } else if (trainInsideCrossing) {
+    Blynk.virtualWrite(V6, 0);
+  } else {
+    Blynk.virtualWrite(V6, 1);
+  }
+}
+
+
+BLYNK_WRITE(V9) {
+  manualMode = param.asInt();
+}
+
+BLYNK_WRITE(V10) {
+  manualCloseCommand = param.asInt();
+}
+
+BLYNK_WRITE(V12) {
+  int buttonPressed = param.asInt();
+
+  if (buttonPressed == 1) {
+    multipleTrainEmergency = false;
+    trainInsideCrossing = false;
+    waitingForSensor5 = false;
+    waitingForSensor3Reverse = false;
+    waitingForSensor2 = false;
+    speedAvailable = false;
+
+    Serial.println(">> Emergency Reset button থেকে সিস্টেম Reset করা হলো <<");
+
+    Blynk.virtualWrite(V11, 0);
+    Blynk.virtualWrite(V7, 0);
+    Blynk.virtualWrite(V6, 1);
+  }
+}
+
+
+void checkDailyReset() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return;
+  }
+
+  int currentDay = timeinfo.tm_mday;
+
+  if (lastCheckedDay == -1) {
+    lastCheckedDay = currentDay;
+    return;
+  }
+
+  if (currentDay != lastCheckedDay) {
+    trainCountToday = 0;
+    lastCheckedDay = currentDay;
+    Blynk.virtualWrite(V8, trainCountToday);
+  }
+}
+
+
+void setup() {
+  pinMode(trig1, OUTPUT);
+  pinMode(echo1, INPUT);
+
+  pinMode(trig2, OUTPUT);
+  pinMode(echo2, INPUT);
+
+  pinMode(trig3, OUTPUT);
+  pinMode(echo3, INPUT);
+
+  pinMode(trig4, OUTPUT);
+  pinMode(echo4, INPUT);
+
+  pinMode(trig5, OUTPUT);
+  pinMode(echo5, INPUT);
+
+  pinMode(redLightBuzzer, OUTPUT);
+  pinMode(greenLight, OUTPUT);
+  pinMode(buz, OUTPUT);
+
+  ESP32PWM::allocateTimer(0);
+  gateServo.setPeriodHertz(50);
+  gateServo.attach(servoPin, 500, 2400);
+
+  Serial.begin(115200);
+
+  Wire.begin(21, 22);
+  lcd.begin(16, 2);
+  lcd.setBacklight(HIGH);
+
+  lcd.setCursor(0, 0);
+  lcd.print("Smart Railway");
+
+  lcd.setCursor(0, 1);
+  lcd.print("System Starting");
+
+  openGateNormal();
+  delay(1500);
+  lcd.clear();
+
+  // ================== Blynk শুরু করা (Non-blocking) ==================
+  Serial.println("WiFi connect করার চেষ্টা করা হচ্ছে...");
+  Blynk.config(BLYNK_AUTH_TOKEN);
+  WiFi.begin(ssid, pass);
+
+  unsigned long wifiStartAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStartAttemptTime < 15000) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi Connected!");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+    Blynk.connect(5000);
+  } else {
+    Serial.println("\nWiFi Connect হয়নি! WiFi ছাড়াই সিস্টেম চলবে।");
+  }
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  timer.setInterval(1000L, sendToBlynk);
+  timer.setInterval(60000L, checkDailyReset);
+}
+
+
+void loop() {
+  Blynk.run();
+  timer.run();
+
+  distance1 = getDistance(trig1, echo1);
+  bool sensor1Active = distance1 <= detectDistance;
+  delay(10);
+  Blynk.run();
+
+  distance2 = getDistance(trig2, echo2);
+  bool sensor2Active = distance2 <= detectDistance;
+  delay(10);
+  Blynk.run();
+
+  processArrivalAndSpeed(sensor1Active, sensor2Active);
+
+  distance3 = getDistance(trig3, echo3);
+  bool sensor3Active = distance3 <= detectDistance;
+  delay(10);
+  Blynk.run();
+
+  distance4 = getDistance(trig4, echo4);
+  bool sensor4Active = distance4 <= detectDistance;
+  obstacleDetected = sensor4Active;
+  delay(10);
+  Blynk.run();
+
+  distance5 = getDistance(trig5, echo5);
+  bool sensor5Active = distance5 <= detectDistance;
+  delay(10);
+  Blynk.run();
+
+  processDeparture(sensor3Active, sensor5Active);
+
+  if (manualMode) {
+    if (manualCloseCommand) {
+      closeGate();
+    } else {
+      openGateNormal();
+    }
+  }
+  else {
+    if (multipleTrainEmergency) {
+      closeGateMultipleTrain();
+    }
+    else if (trainInsideCrossing) {
+      if (obstacleDetected) {
+        openGateForSafety();
+      }
+      else {
+        closeGate();
+      }
+    }
+    else {
+      openGateNormal();
+    }
+  }
+
+  updateLCD();
+  printSerialData();
+}
